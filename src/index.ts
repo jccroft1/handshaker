@@ -289,4 +289,3 @@ export default {
 		return response;
 	},
 } satisfies ExportedHandler<Env>;
-
