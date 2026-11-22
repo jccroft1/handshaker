@@ -72,65 +72,6 @@ export class SessionRoom extends DurableObject<Env> {
 		await this.ctx.storage.deleteAll();
 	}
 
-	async getStatus(): Promise<SessionStatus> {
-		const expiresAt =
-			await this.ctx.storage.get<number>("expiresAt");
-
-		// Does the session exist?
-		if (expiresAt === undefined) {
-			return "not_found";
-		}
-
-		// Has the invitation expired?
-		if (Date.now() >= expiresAt) {
-			return "not_found";
-		}
-
-		// Has a guest already joined?
-		const guestToken =
-			await this.ctx.storage.get<string>("guestToken");
-
-		if (guestToken !== undefined) {
-			return "full";
-		}
-
-		return "open";
-	}
-
-	async setOffer(
-		token: string,
-		sdp: string
-	): Promise<boolean> {
-		const hostToken =
-			await this.ctx.storage.get<string>("hostToken");
-
-		if (!hostToken || token !== hostToken) {
-			return false;
-		}
-
-		await this.ctx.storage.put("offer", sdp);
-		return true;
-	}
-
-	async getOffer(token: string): Promise<OfferResult> {
-		const guestToken =
-			await this.ctx.storage.get<string>("guestToken");
-
-		if (!guestToken || token !== guestToken) {
-			return { status: "unauthorized" };
-		}
-
-		const sdp =
-			await this.ctx.storage.get<string>("offer");
-
-		if (sdp === undefined) {
-			return { status: "pending" };
-		}
-
-		return { status: "ready", sdp };
-	}
-
-
 	async join(): Promise<JoinResult> {
 		return this.ctx.storage.transaction(async (txn) => {
 			const expiresAt = await txn.get<number>("expiresAt");
@@ -217,5 +158,4 @@ export class SessionRoom extends DurableObject<Env> {
 
 		return { status: "ready", answer };
 	}
-
 }

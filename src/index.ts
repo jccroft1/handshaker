@@ -19,15 +19,71 @@ function isDescription(
 }
 
 
-const INVITE_LIFETIME_MS = 5 * 60 * 1000; // 5 mins 
+const INVITE_LIFETIME_MS = 5 * 60 * 1000; // 5 mins
+// Allow JSON escaping overhead for a 64,000-character SDP.
+const MAX_JSON_BODY_BYTES = 512 * 1024;
+
+async function readJsonBody(request: Request): Promise<unknown> {
+	const tooLarge = () => Response.json(
+		{ error: "Request body too large" },
+		{ status: 413 }
+	);
+
+	if (Number(request.headers.get("Content-Length")) > MAX_JSON_BODY_BYTES) {
+		return tooLarge();
+	}
+
+	if (!request.body) {
+		return null;
+	}
+
+	const reader = request.body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+
+			size += value.byteLength;
+			if (size > MAX_JSON_BODY_BYTES) {
+				await reader.cancel().catch(() => undefined);
+				return tooLarge();
+			}
+			chunks.push(value);
+		}
+	} catch {
+		return null;
+	} finally {
+		reader.releaseLock();
+	}
+
+	const bytes = new Uint8Array(size);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+
+	try {
+		return JSON.parse(new TextDecoder().decode(bytes));
+	} catch {
+		return null;
+	}
+}
 
 function handleHealth(): Response {
 	return Response.json({ status: "ok" });
 }
 
 async function handleCreateSession(request: Request, env: Env): Promise<Response> {
-	const body: unknown =
-		await request.json().catch(() => null);
+	const body = await readJsonBody(request);
+	if (body instanceof Response) {
+		return body;
+	}
 
 	if (
 		typeof body !== "object" ||
@@ -138,9 +194,11 @@ async function handlePutAnswer(request: Request, env: Env, sessionId: string): P
 		);
 	}
 
-	// Validate the request 
-	const body: unknown =
-		await request.json().catch(() => null);
+	// Validate the request
+	const body = await readJsonBody(request);
+	if (body instanceof Response) {
+		return body;
+	}
 
 	if (
 		typeof body !== "object" ||
