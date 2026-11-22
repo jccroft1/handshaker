@@ -117,10 +117,7 @@ async function handleCreateSession(request: Request, env: Env): Promise<Response
 			expiresIn: 300,
 			expiresAt: new Date(expiresAt).toISOString(),
 		},
-		{
-			status: 201,
-			headers: { "Cache-Control": "no-store" },
-		}
+		{ status: 201 }
 	);
 }
 
@@ -140,15 +137,7 @@ async function handleJoinSession(sessionId: string, env: Env): Promise<Response>
 			return Response.json(result, { status: 409 });
 
 		case "joined":
-			return Response.json(
-				{
-					...result,
-					sessionId,
-				},
-				{
-					headers: { "Cache-Control": "no-store" },
-				}
-			);
+			return Response.json({ ...result, sessionId });
 	}
 }
 
@@ -174,9 +163,7 @@ async function handleGetAnswer(request: Request, env: Env, sessionId: string): P
 
 		case "pending":
 		case "ready":
-			return Response.json(result, {
-				headers: { "Cache-Control": "no-store" },
-			});
+			return Response.json(result);
 	}
 }
 
@@ -237,43 +224,69 @@ async function handlePutAnswer(request: Request, env: Env, sessionId: string): P
 	}
 }
 
+function handleOptions(): Response {
+	return new Response(null, {
+		status: 204,
+		headers: {
+			"Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type, Authorization",
+			"Access-Control-Max-Age": "86400",
+		},
+	});
+}
+
+async function route(request: Request, env: Env): Promise<Response> {
+	const url = new URL(request.url);
+
+	if (request.method === "OPTIONS") {
+		return handleOptions();
+	}
+
+	if (request.method === "GET" && url.pathname === "/health") {
+		return handleHealth();
+	}
+
+	if (request.method === "POST" && url.pathname === "/sessions") {
+		return handleCreateSession(request, env);
+	}
+
+	const joinMatch = url.pathname.match(
+		/^\/join\/([0-9a-f-]{36})$/i
+	);
+	if (joinMatch && request.method === "POST") {
+		return handleJoinSession(joinMatch[1], env);
+	}
+
+	const answerMatch = url.pathname.match(
+		/^\/sessions\/([0-9a-f-]{36})\/answer$/i
+	);
+	if (answerMatch) {
+		switch (request.method) {
+			case "GET":
+				return handleGetAnswer(request, env, answerMatch[1]);
+			case "PUT":
+				return handlePutAnswer(request, env, answerMatch[1]);
+		}
+	}
+
+	return new Response("Not found", { status: 404 });
+}
+
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
-		const url = new URL(request.url);
+	async fetch(request: Request, env: Env & { CORS_ORIGIN?: string }): Promise<Response> {
+		let response: Response;
 
-		if (request.method === "GET" && url.pathname === "/health") {
-			return handleHealth();
+		try {
+			response = await route(request, env);
+		} catch (error) {
+			console.error("Request failed", error);
+			response = Response.json({ error: "Internal server error" }, { status: 500 });
 		}
 
+		response.headers.set("Access-Control-Allow-Origin", env.CORS_ORIGIN ?? "*");
+		response.headers.set("Cache-Control", "no-store");
 
-		if (request.method === "POST" && url.pathname === "/sessions") {
-			return handleCreateSession(request, env);
-		}
-
-
-		const joinMatch = url.pathname.match(
-			/^\/join\/([0-9a-f-]{36})$/i
-		);
-
-		if (joinMatch && request.method === "POST") {
-			return handleJoinSession(joinMatch[1], env);
-		}
-
-		const answerMatch = url.pathname.match(
-			/^\/sessions\/([0-9a-f-]{36})\/answer$/i
-		);
-
-		if (answerMatch) {
-			switch (request.method) {
-				case "GET":
-					return handleGetAnswer(request, env, answerMatch[1]);
-				case "PUT":
-					return handlePutAnswer(request, env, answerMatch[1]);
-
-			}
-		}
-
-		return new Response("Not found", { status: 404 });
+		return response;
 	},
 } satisfies ExportedHandler<Env>;
 

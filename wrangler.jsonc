@@ -11,6 +11,8 @@
 		"enabled": true
 	},
 	"upload_source_maps": true,
+	// Preserve production variables managed in the Cloudflare dashboard.
+	"keep_vars": true,
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
@@ -35,14 +37,15 @@
 			"type": "durable-object",
 			"storage": "sqlite"
 		}
-	}
+	},
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 	 * Note: Use secrets to store sensitive data.
 	 * https://developers.cloudflare.com/workers/configuration/secrets/
 	 */
-	// "vars": {  "MY_VARIABLE": "production_value" }
+	// Optional: set CORS_ORIGIN in the dashboard or .dev.vars to restrict origins.
+	// When unset, the Worker allows any origin (*).
 	/**
 	 * Static Assets
 	 * https://developers.cloudflare.com/workers/static-assets/binding/
