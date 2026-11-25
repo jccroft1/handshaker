@@ -39,6 +39,7 @@ export type Answer = SessionDescription & {
 type SaveAnswerResult =
 	| "saved"
 	| "already_submitted"
+	| "offer_available"
 	| "unauthorized";
 
 type GetAnswerResult =
@@ -47,8 +48,8 @@ type GetAnswerResult =
 	| { status: "unauthorized" };
 
 
-const INITIAL_CLEANUP_DELAY_MS = 10 * 60 * 1000; // 10 mins
-const JOINED_CLEANUP_DELAY_MS = 5 * 60 * 1000; // 5 mins
+const SESSION_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+const DESCRIPTION_LIFETIME_MS = 5 * 60 * 1000;
 
 export class SessionRoom extends DurableObject<Env> {
 	constructor(ctx: DurableObjectState, env: Env) {
@@ -60,7 +61,7 @@ export class SessionRoom extends DurableObject<Env> {
 		hostToken: string,
 		offer: Offer
 	): Promise<void> {
-		const cleanupAt = Date.now() + INITIAL_CLEANUP_DELAY_MS;
+		const cleanupAt = Date.now() + SESSION_LIFETIME_MS;
 
 		await this.ctx.storage.transaction(async (txn) => {
 			await txn.put({ expiresAt, hostToken, offer });
@@ -72,6 +73,26 @@ export class SessionRoom extends DurableObject<Env> {
 		await this.ctx.storage.deleteAll();
 	}
 
+	async setOffer(
+		requestHosttoken: string,
+		offer: Offer,
+		expiresAt: number
+	): Promise<"saved" | "unauthorized"> {
+		return this.ctx.storage.transaction(async (txn) => {
+			const hostToken = await txn.get<string>("hostToken");
+
+			if (!hostToken || requestHosttoken !== hostToken) {
+				return "unauthorized";
+			}
+
+			await txn.put({ offer, expiresAt });
+			await txn.delete(["answer", "answerExpiresAt"]);
+			await txn.setAlarm(Date.now() + SESSION_LIFETIME_MS);
+
+			return "saved";
+		});
+	}
+
 	async join(): Promise<JoinResult> {
 		return this.ctx.storage.transaction(async (txn) => {
 			const expiresAt = await txn.get<number>("expiresAt");
@@ -80,27 +101,22 @@ export class SessionRoom extends DurableObject<Env> {
 				return { status: "not_found" } as const;
 			}
 
+			await txn.setAlarm(Date.now() + SESSION_LIFETIME_MS);
+
 			if (Date.now() >= expiresAt) {
 				return { status: "expired" } as const;
-			}
-
-			const existingGuest =
-				await txn.get<string>("guestToken");
-
-			if (existingGuest !== undefined) {
-				return { status: "full" } as const;
 			}
 
 			const offer = await txn.get<Offer>("offer");
 
 			if (!offer) {
-				throw new Error("Session has no offer");
+				return { status: "full" } as const;
 			}
 
 			const guestToken = crypto.randomUUID();
 
 			await txn.put("guestToken", guestToken);
-			await txn.setAlarm(Date.now() + JOINED_CLEANUP_DELAY_MS);
+			await txn.delete("offer");
 
 			return {
 				status: "joined",
@@ -123,6 +139,12 @@ export class SessionRoom extends DurableObject<Env> {
 				return "unauthorized";
 			}
 
+			await txn.setAlarm(Date.now() + SESSION_LIFETIME_MS);
+
+			if (await txn.get<Offer>("offer") !== undefined) {
+				return "offer_available";
+			}
+
 			const existingAnswer =
 				await txn.get<Answer>("answer");
 
@@ -130,7 +152,7 @@ export class SessionRoom extends DurableObject<Env> {
 				return "already_submitted";
 			}
 
-			await txn.put("answer", answer);
+			await txn.put({ answer, answerExpiresAt: Date.now() + DESCRIPTION_LIFETIME_MS });
 
 			return "saved";
 		});
@@ -140,22 +162,23 @@ export class SessionRoom extends DurableObject<Env> {
 	async getAnswer(
 		token: string
 	): Promise<GetAnswerResult> {
-		const hostToken =
-			await this.ctx.storage.get<string>("hostToken");
+		return this.ctx.storage.transaction(async (txn) => {
+			const hostToken = await txn.get<string>("hostToken");
 
-		if (!hostToken || token !== hostToken) {
-			return { status: "unauthorized" };
-		}
+			if (!hostToken || token !== hostToken) {
+				return { status: "unauthorized" } as const;
+			}
 
-		// we don't check expiration here 
+			await txn.setAlarm(Date.now() + SESSION_LIFETIME_MS);
 
-		const answer =
-			await this.ctx.storage.get<Answer>("answer");
+			const answer = await txn.get<Answer>("answer");
+			const expiresAt = await txn.get<number>("answerExpiresAt");
 
-		if (answer === undefined) {
-			return { status: "pending" };
-		}
+			if (answer === undefined || expiresAt === undefined || Date.now() >= expiresAt) {
+				return { status: "pending" } as const;
+			}
 
-		return { status: "ready", answer };
+			return { status: "ready", answer } as const;
+		});
 	}
 }

@@ -141,6 +141,40 @@ async function handleJoinSession(sessionId: string, env: Env): Promise<Response>
 	}
 }
 
+async function handleSetOffer(request: Request, env: Env, sessionId: string): Promise<Response> {
+	const hostToken = request.headers
+		.get("Authorization")
+		?.match(/^Bearer ([^\s]+)$/i)?.[1];
+
+	if (!hostToken) {
+		return Response.json({ error: "Missing host token" }, { status: 401 });
+	}
+
+	const body = await readJsonBody(request);
+	if (body instanceof Response) {
+		return body;
+	}
+
+	if (
+		typeof body !== "object" ||
+		body === null ||
+		!("offer" in body) ||
+		!isDescription(body.offer, "offer")
+	) {
+		return Response.json({ error: "Invalid Offer" }, { status: 400 });
+	}
+
+	const offer: Offer = { type: "offer", sdp: body.offer.sdp };
+	const room = env.SESSION_ROOM.getByName(sessionId);
+	const result = await room.setOffer(hostToken, offer, Date.now() + INVITE_LIFETIME_MS);
+
+	if (result === "unauthorized") {
+		return Response.json({ error: "Unauthorized" }, { status: 401 });
+	}
+
+	return Response.json({ status: "saved" });
+}
+
 async function handleGetAnswer(request: Request, env: Env, sessionId: string): Promise<Response> {
 	const room = env.SESSION_ROOM.getByName(sessionId);
 
@@ -216,6 +250,12 @@ async function handlePutAnswer(request: Request, env: Env, sessionId: string): P
 				{ status: 409 }
 			);
 
+		case "offer_available":
+			return Response.json(
+				{ error: "Offer has not been claimed" },
+				{ status: 409 }
+			);
+
 		case "unauthorized":
 			return Response.json(
 				{ error: "Unauthorized" },
@@ -248,6 +288,13 @@ async function route(request: Request, env: Env): Promise<Response> {
 
 	if (request.method === "POST" && url.pathname === "/sessions") {
 		return handleCreateSession(request, env);
+	}
+
+	const sessionMatch = url.pathname.match(
+		/^\/sessions\/([0-9a-f-]{36})$/i
+	);
+	if (sessionMatch && request.method === "POST") {
+		return handleSetOffer(request, env, sessionMatch[1]);
 	}
 
 	const joinMatch = url.pathname.match(

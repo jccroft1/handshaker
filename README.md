@@ -10,9 +10,17 @@ All request and response bodies below are JSON. Send JSON request bodies with `C
 | --- | --- | --- | --- |
 | GET | `/health` | Anyone | Check service health |
 | POST | `/sessions` | Host | Create a session with an offer |
+| POST | `/sessions/:id` | Host | Set a new offer using the host token |
 | POST | `/join/:id` | Guest | Claim a session and receive its offer |
 | PUT | `/sessions/:id/answer` | Guest | Submit an answer using the guest token |
 | GET | `/sessions/:id/answer` | Host | Retrieve the answer using the host token |
+
+### Lifetimes and reuse
+
+Sessions remain for 30 days, extended by another 30 days whenever they are used. Requests with invalid tokens do not extend the session.
+
+Offers expire 5 minutes after being set. Answers expire 5 minutes after being submitted. These expirations do not delete the session: the host can reuse the same session ID and host token to set a new offer.
+
 
 ### GET /health
 
@@ -54,11 +62,27 @@ No authorization required.
 }
 ```
 
-`expiresIn` is the invitation lifetime in seconds (5 minutes). `expiresAt` is its expiration time in ISO 8601 format. Keep `hostToken` for retrieving the answer.
+`expiresIn` is the offer lifetime in seconds (5 minutes), not the session lifetime. `expiresAt` is the offer's expiration time in ISO 8601 format. Keep `hostToken` for retrieving the answer and setting new offers.
+
+### POST /sessions/:id
+
+Requires `Authorization: Bearer <hostToken>`. Uses the same request body and offer validation as `POST /sessions`.
+
+Replaces the current offer, gives it a new 5-minute lifetime, and clears any previous answer. The session ID and host token remain unchanged.
+
+**200 OK**
+
+```json
+{
+  "status": "saved"
+}
+```
 
 ### POST /join/:id
 
-No request body or authorization required. Only one guest can claim a session.
+No request body or authorization required. Only one guest can claim each offer. Claiming removes the offer and issues a new guest token, invalidating any previous guest token.
+
+Returns **404** if the session does not exist, **410** if the offer has expired, or **409** if the offer has already been claimed.
 
 **200 OK**
 
@@ -91,7 +115,7 @@ Requires `Authorization: Bearer <guestToken>`.
 }
 ```
 
-`answer.type` must be `"answer"`. `answer.sdp` must be a non-empty string of at most 64,000 characters. An answer can only be submitted once.
+`answer.type` must be `"answer"`. `answer.sdp` must be a non-empty string of at most 64,000 characters. An answer can only be submitted once per offer. Returns **409** if an answer was already submitted or a new offer is awaiting a guest (the answer would be for the wrong offer).
 
 **200 OK**
 
@@ -105,7 +129,7 @@ Requires `Authorization: Bearer <guestToken>`.
 
 Requires `Authorization: Bearer <hostToken>`. No request body.
 
-**200 OK — answer not yet submitted**
+**200 OK — answer not yet submitted or expired**
 
 ```json
 {
