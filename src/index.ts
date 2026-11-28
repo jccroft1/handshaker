@@ -121,12 +121,18 @@ async function handleCreateSession(request: Request, env: Env): Promise<Response
 	);
 }
 
-async function handleJoinSession(sessionId: string, env: Env): Promise<Response> {
+async function handleJoinSession(request: Request, sessionId: string, env: Env): Promise<Response> {
 	const room = env.SESSION_ROOM.getByName(sessionId);
+	const token = request.headers
+		.get("Authorization")
+		?.match(/^Bearer ([^\s]+)$/i)?.[1];
 
-	const result = await room.join();
+	const result = await room.join(token);
 
 	switch (result.status) {
+		case "unauthorized":
+			return Response.json(result, { status: 401 });
+
 		case "not_found":
 			return Response.json(result, { status: 404 });
 
@@ -269,7 +275,7 @@ function handleOptions(): Response {
 		status: 204,
 		headers: {
 			"Access-Control-Allow-Methods": "GET, POST, PUT, OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type, Authorization",
+			"Access-Control-Allow-Headers": "Content-Type, Authorization, X-App-Key",
 			"Access-Control-Max-Age": "86400",
 		},
 	});
@@ -301,7 +307,7 @@ async function route(request: Request, env: Env): Promise<Response> {
 		/^\/join\/([0-9a-f-]{36})$/i
 	);
 	if (joinMatch && request.method === "POST") {
-		return handleJoinSession(joinMatch[1], env);
+		return handleJoinSession(request, joinMatch[1], env);
 	}
 
 	const answerMatch = url.pathname.match(

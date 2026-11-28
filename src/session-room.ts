@@ -13,7 +13,7 @@ type JoinResult =
 		offer: Offer;
 	}
 	| {
-		status: "full" | "expired" | "not_found"
+		status: "full" | "expired" | "not_found" | "unauthorized"
 	};
 
 export type SessionDescription = {
@@ -93,12 +93,18 @@ export class SessionRoom extends DurableObject<Env> {
 		});
 	}
 
-	async join(): Promise<JoinResult> {
+	async join(token?: string): Promise<JoinResult> {
 		return this.ctx.storage.transaction(async (txn) => {
 			const expiresAt = await txn.get<number>("expiresAt");
 
 			if (expiresAt === undefined) {
 				return { status: "not_found" } as const;
+			}
+
+			const existingGuestToken = await txn.get<string>("guestToken");
+
+			if (existingGuestToken !== undefined && token !== existingGuestToken) {
+				return { status: "unauthorized" } as const;
 			}
 
 			await txn.setAlarm(Date.now() + SESSION_LIFETIME_MS);
@@ -113,7 +119,7 @@ export class SessionRoom extends DurableObject<Env> {
 				return { status: "full" } as const;
 			}
 
-			const guestToken = crypto.randomUUID();
+			const guestToken = existingGuestToken ?? crypto.randomUUID();
 
 			await txn.put("guestToken", guestToken);
 			await txn.delete("offer");

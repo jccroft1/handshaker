@@ -80,9 +80,9 @@ Replaces the current offer, gives it a new 5-minute lifetime, and clears any pre
 
 ### POST /join/:id
 
-No request body or authorization required. Only one guest can claim each offer. Claiming removes the offer and issues a new guest token, invalidating any previous guest token.
+No request body required. The first claim requires no authorization and issues a guest token. All subsequent join requests require `Authorization: Bearer <guestToken>`. The guest token remains unchanged across reconnections, including when the host sets a new offer. Only one guest can claim each offer, and claiming removes the offer.
 
-Returns **404** if the session does not exist, **410** if the offer has expired, or **409** if the offer has already been claimed.
+Returns **401** if a previously claimed session's guest token is missing or invalid, **404** if the session does not exist, **410** if the offer has expired, or **409** if the offer has already been claimed. Unauthorized requests do not extend the session lifetime.
 
 **200 OK**
 
@@ -98,7 +98,7 @@ Returns **404** if the session does not exist, **410** if the offer has expired,
 }
 ```
 
-Keep `guestToken` for submitting the answer.
+Keep `guestToken` securely for submitting answers and reconnecting to this session. If the guest loses its token, create a new session to pair again.
 
 ### PUT /sessions/:id/answer
 
